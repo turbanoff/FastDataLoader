@@ -1,0 +1,61 @@
+<idea-plugin>
+  <id>org.turbanov.fast.data.loader</id>
+  <name>Fast Data Loader</name>
+  <version>0.8</version>
+  <vendor email="turbanoff@gmail.com" url="https://github.com/turbanoff/FastDataLoader">Turbanov Andrey</vendor>
+
+  <description><![CDATA[
+Provides references to classes/fields annotated by some annotations.
+To obtain json with annotations usages, you can use following code:
+
+<pre><code>
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.net.Socket;
+
+public class FastDataProvider {
+
+  private static final String moduleName = System.getProperty("fast.data.loader.idea.module.name");
+  private static final Integer portNumber = Integer.getInteger("fast.data.loader.server.port");
+
+  public static String provide() {
+      if (portNumber == null) return null;
+      try (Socket socket = new Socket("localhost", portNumber)) {
+          DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
+          dos.writeUTF(moduleName);
+          DataInputStream dis = new DataInputStream(socket.getInputStream());
+          String json = dis.readUTF();
+          dos.writeByte(1);
+          return json;
+      } catch (IOException e) {
+          e.printStackTrace();
+          return null;
+      }
+  }
+}
+</code></pre>
+    ]]></description>
+
+  <change-notes><![CDATA[
+    ]]>
+  </change-notes>
+
+  <idea-version since-build="143.0"/>
+
+  <depends>com.intellij.modules.java</depends>
+
+  <extensions defaultExtensionNs="com.intellij">
+    <java.programPatcher implementation="org.turbanov.loader.FastDataLoaderJavaProgramPatcher"/>
+  </extensions>
+
+  <actions>
+    <action id="org.turbanov.loader.ShowDataAction" class="org.turbanov.loader.ShowDataAction" text="Make annotation loader data"/>
+  </actions>
+
+  <application-components>
+    <component>
+      <implementation-class>org.turbanov.loader.FastDataLoaderComponent</implementation-class>
+    </component>
+  </application-components>
+</idea-plugin>
