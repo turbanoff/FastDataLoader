@@ -11,6 +11,7 @@ import java.util.List;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.intellij.codeInsight.AnnotationUtil;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
@@ -24,6 +25,7 @@ import com.intellij.psi.PsiField;
 import com.intellij.psi.PsiJavaCodeReferenceElement;
 import com.intellij.psi.PsiReference;
 import com.intellij.psi.search.GlobalSearchScope;
+import com.intellij.psi.search.ProjectAndLibrariesScope;
 import com.intellij.psi.search.searches.ReferencesSearch;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.util.Query;
@@ -97,21 +99,22 @@ public class FastDataLoaderServer implements Disposable {
         dis.readByte();//make sure that data received
     }
 
-    static JsonObject createData(Project project, GlobalSearchScope scope) {
+    static JsonObject createData(Project project, GlobalSearchScope findUsagesScope) {
         JavaPsiFacade psiFacade = JavaPsiFacade.getInstance(project);
 
-        List<PsiClass> resolvedFieldAnnotations = resolve(fieldAnnotations, psiFacade, scope);
-        List<PsiClass> resolvedClassAnnotations = resolve(classAnnotations, psiFacade, scope);
+        ProjectAndLibrariesScope resolveScope = new ProjectAndLibrariesScope(project);
+        List<PsiClass> resolvedFieldAnnotations = resolve(fieldAnnotations, psiFacade, resolveScope);
+        List<PsiClass> resolvedClassAnnotations = resolve(classAnnotations, psiFacade, resolveScope);
 
         if (resolvedFieldAnnotations.isEmpty() && resolvedClassAnnotations.isEmpty()) {
-            log.info("Unable to find annotations: " + fieldAnnotations + " or " + classAnnotations);
+            log.info("Unable to find any of: " + fieldAnnotations + " or " + classAnnotations);
             return null;
         }
 
         //annotation name -> annotated classes
-        JsonObject classes = findAnnotatedClasses(scope, resolvedClassAnnotations);
+        JsonObject classes = findAnnotatedClasses(findUsagesScope, resolvedClassAnnotations);
         //annotation name -> list of class&field
-        JsonObject fields = findAnnotatedFields(scope, resolvedFieldAnnotations);
+        JsonObject fields = findAnnotatedFields(findUsagesScope, resolvedFieldAnnotations);
 
         JsonObject result = new JsonObject();
         result.add("classes", classes);
@@ -123,6 +126,10 @@ public class FastDataLoaderServer implements Disposable {
         List<PsiClass> resolved = new ArrayList<>(annotations.size());
         for (String annotationName : annotations) {
             PsiClass annotation = psiFacade.findClass(annotationName, scope);
+            if (annotation == null) {
+                log.warn("Unable to find annotation class " + annotationName);
+                continue;
+            }
             resolved.add(annotation);
         }
         return resolved;
@@ -152,29 +159,44 @@ public class FastDataLoaderServer implements Disposable {
     private static JsonObject findAnnotatedClasses(GlobalSearchScope scope, List<PsiClass> resolvedClassAnnotations) {
         JsonObject classesObject = new JsonObject();
         for (PsiClass psiClass : resolvedClassAnnotations) {
-            if (psiClass.getQualifiedName() == null) continue;
+            String qualifiedName = psiClass.getQualifiedName();
+            if (qualifiedName == null) continue;
             Query<PsiReference> query = ReferencesSearch.search(psiClass, scope);
             JsonArray classes = new JsonArray();
             query.forEach(annotationReference -> {
-                String className = getAppliedClassName(annotationReference);
+                String className = getAppliedClassName(annotationReference, qualifiedName);
                 if (className != null) {
                     classes.add(className);
                 }
             });
             if (classes.size() != 0) {
-                classesObject.add(psiClass.getQualifiedName(), classes);
+                classesObject.add(qualifiedName, classes);
             }
         }
         return classesObject;
     }
 
-    private static String getAppliedClassName(PsiReference reference) {
+    private static String getAppliedClassName(PsiReference reference, String qualifiedName) {
         if (!(reference instanceof PsiJavaCodeReferenceElement)) {
             return null;
         }
         PsiClass clazz = PsiTreeUtil.getParentOfType((PsiJavaCodeReferenceElement) reference, PsiClass.class);
         if (clazz == null) {
             return null;
+        }
+        if (!AnnotationUtil.isAnnotated(clazz, qualifiedName, false)) {
+            return null;
+        }
+        String name = clazz.getQualifiedName();
+        if (name == null) {
+            return null;
+        }
+        if (clazz.getContainingClass() != null) {
+            int last = name.lastIndexOf('.');
+            if (last != -1) {
+                name = name.substring(0, last) + "$" + name.substring(last + 1);
+                return name;
+            }
         }
         return clazz.getQualifiedName();
     }
